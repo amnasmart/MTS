@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Binance Spot Trading (Long Only)</title>
+    <title>Always-On Trading Setup Tool</title>
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     <style>
         body {
@@ -37,7 +37,7 @@
             margin-right: 10px;
         }
         button {
-            background: #2ecc71;
+            background: #3498db;
             color: white;
             cursor: pointer;
         }
@@ -45,8 +45,18 @@
             margin-top: 30px;
             padding: 15px;
             border-radius: 5px;
+        }
+        .bullish {
             background: #e8f5e9;
             border-left: 5px solid #2ecc71;
+        }
+        .bearish {
+            background: #ffebee;
+            border-left: 5px solid #e74c3c;
+        }
+        .neutral {
+            background: #fff8e1;
+            border-left: 5px solid #f39c12;
         }
         .setup-box {
             display: grid;
@@ -66,39 +76,41 @@
         .spinner {
             border: 4px solid rgba(0,0,0,0.1);
             border-radius: 50%;
-            border-top: 4px solid #2ecc71;
+            border-top: 4px solid #3498db;
             width: 30px;
             height: 30px;
             animation: spin 1s linear infinite;
             margin: 10px auto;
         }
+        .warning {
+            background: #fff3e0;
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 15px;
+            border-left: 3px solid #ffa000;
+        }
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
-        }
-        .no-setup {
-            color: #e74c3c;
-            text-align: center;
-            padding: 20px;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Binance Spot Trading (Long Only)</h1>
+        <h1>Always-On Trading Setup</h1>
         
         <div class="input-group">
             <input type="text" id="coinInput" placeholder="Enter coin symbol (e.g. BTCUSDT)" value="BTCUSDT">
-            <button id="analyzeBtn">Find Long Setup</button>
+            <button id="analyzeBtn">Get Setup</button>
         </div>
         
         <div class="loading" id="loading">
             <div class="spinner"></div>
-            <p>Searching for long opportunities...</p>
+            <p>Analyzing trading setup...</p>
         </div>
         
         <div class="result" id="result" style="display: none;">
-            <h2 id="trendTitle">Long Setup Found</h2>
+            <h2 id="trendTitle">Market Analysis</h2>
             <p id="analysisText"></p>
             
             <div class="setup-box">
@@ -119,12 +131,8 @@
                     <p id="riskReward"></p>
                 </div>
             </div>
-        </div>
-        
-        <div class="no-setup" id="noSetup" style="display: none;">
-            <h3>No Good Long Setup Found</h3>
-            <p>Market conditions not favorable for long positions at this time.</p>
-            <p>Check again later or analyze a different coin.</p>
+            
+            <div id="warningBox"></div>
         </div>
     </div>
 
@@ -137,7 +145,6 @@
             
             document.getElementById('loading').style.display = 'block';
             document.getElementById('result').style.display = 'none';
-            document.getElementById('noSetup').style.display = 'none';
             
             try {
                 // Get current price
@@ -147,15 +154,12 @@
                 // Get daily candles for analysis
                 const candles = await axios.get(`https://api.binance.com/api/v3/klines?symbol=${coin}&interval=1d&limit=50`);
                 const closes = candles.data.map(c => parseFloat(c[4]));
+                const highs = candles.data.map(c => parseFloat(c[2]));
+                const lows = candles.data.map(c => parseFloat(c[3]));
                 
-                // Analyze for long setup only
-                const setup = findLongSetup(closes, currentPrice);
-                
-                if (setup) {
-                    displayResults(coin, setup, currentPrice);
-                } else {
-                    document.getElementById('noSetup').style.display = 'block';
-                }
+                // Always return a setup (never "no setup found")
+                const setup = generateAlwaysSetup(closes, highs, lows, currentPrice);
+                displayResults(coin, setup, currentPrice);
                 
             } catch (error) {
                 alert('Error: ' + (error.response?.data?.msg || error.message));
@@ -164,39 +168,101 @@
             }
         }
         
-        function findLongSetup(prices, currentPrice) {
-            const sma20 = prices.slice(-20).reduce((a,b) => a + b, 0) / 20;
-            const sma50 = prices.slice(-50).reduce((a,b) => a + b, 0) / 50;
+        function generateAlwaysSetup(closes, highs, lows, currentPrice) {
+            const sma20 = calculateSMA(closes, 20);
+            const sma50 = calculateSMA(closes, 50);
+            const lastSma20 = sma20[sma20.length-1];
+            const lastSma50 = sma50[sma50.length-1];
             
-            // Only look for bullish conditions
-            if (currentPrice > sma20 && sma20 > sma50) {
-                const support = Math.min(...prices.slice(-20));
-                const resistance = Math.max(...prices.slice(-20));
-                
-                return {
-                    entry: (currentPrice * 0.99).toFixed(4), // 1% below current
-                    takeProfit: [
-                        (currentPrice * 1.03).toFixed(4), // 3% target
-                        (resistance * 0.98).toFixed(4)   // Near resistance
-                    ],
-                    stopLoss: (support * 1.01).toFixed(4), // Just below support
-                    riskReward: '1:3',
-                    analysis: 'Bullish trend detected. Price above key moving averages. Good spot for long position.'
-                };
+            // Support/resistance
+            const support = Math.min(...lows.slice(-20));
+            const resistance = Math.max(...highs.slice(-20));
+            
+            // Determine market condition
+            let trend = 'neutral';
+            if (currentPrice > lastSma20 && lastSma20 > lastSma50) trend = 'bullish';
+            else if (currentPrice < lastSma20 && lastSma20 < lastSma50) trend = 'bearish';
+            
+            // Always generate setup regardless of market condition
+            const setup = { trend };
+            
+            if (trend === 'bullish') {
+                setup.entry = [
+                    (currentPrice * 0.99).toFixed(4),
+                    (lastSma20 * 0.995).toFixed(4)
+                ];
+                setup.takeProfit = [
+                    (currentPrice * 1.03).toFixed(4),
+                    (resistance * 0.98).toFixed(4)
+                ];
+                setup.stopLoss = (support * 1.01).toFixed(4);
+                setup.riskReward = '1:3';
+                setup.analysis = 'Bullish trend. Price above both SMAs (20 & 50). Good conditions for long positions.';
+                setup.warning = '';
+            } 
+            else if (trend === 'bearish') {
+                setup.entry = [
+                    (currentPrice * 0.98).toFixed(4),
+                    (support * 1.02).toFixed(4)
+                ];
+                setup.takeProfit = [
+                    (currentPrice * 1.01).toFixed(4),
+                    (lastSma20 * 0.995).toFixed(4)
+                ];
+                setup.stopLoss = (currentPrice * 0.97).toFixed(4);
+                setup.riskReward = '1:2';
+                setup.analysis = 'Bearish trend. Price below both SMAs (20 & 50). Consider waiting for better entry or smaller position size.';
+                setup.warning = 'Warning: Trading against the trend. Use smaller position size and tighter stop loss.';
+            }
+            else {
+                setup.entry = [
+                    (support * 1.01).toFixed(4),
+                    (currentPrice * 0.995).toFixed(4)
+                ];
+                setup.takeProfit = [
+                    (resistance * 0.98).toFixed(4),
+                    (currentPrice * 1.02).toFixed(4)
+                ];
+                setup.stopLoss = (support * 0.99).toFixed(4);
+                setup.riskReward = '1:2';
+                setup.analysis = 'Neutral market. Price between SMAs (20 & 50). Wait for breakout confirmation.';
+                setup.warning = 'Warning: Market in consolidation. Trade with caution and wait for confirmation.';
             }
             
-            return null;
+            return setup;
+        }
+        
+        function calculateSMA(data, period) {
+            const sma = [];
+            for (let i = period - 1; i < data.length; i++) {
+                const sum = data.slice(i - period + 1, i + 1).reduce((a, b) => a + b, 0);
+                sma.push(sum / period);
+            }
+            return sma;
         }
         
         function displayResults(coin, setup, currentPrice) {
-            document.getElementById('trendTitle').textContent = `${coin} Long Setup`;
+            const resultDiv = document.getElementById('result');
+            resultDiv.className = `result ${setup.trend}`;
+            
+            document.getElementById('trendTitle').textContent = `${coin} Trading Setup (${setup.trend.toUpperCase()})`;
             document.getElementById('analysisText').textContent = setup.analysis;
-            document.getElementById('entryPrice').textContent = `${setup.entry} (Current: ${currentPrice.toFixed(4)})`;
-            document.getElementById('takeProfit').textContent = setup.takeProfit.join(' / ');
+            document.getElementById('entryPrice').textContent = Array.isArray(setup.entry) ? 
+                setup.entry.join(' / ') : setup.entry;
+            document.getElementById('takeProfit').textContent = Array.isArray(setup.takeProfit) ? 
+                setup.takeProfit.join(' / ') : setup.takeProfit;
             document.getElementById('stopLoss').textContent = setup.stopLoss;
             document.getElementById('riskReward').textContent = setup.riskReward;
             
-            document.getElementById('result').style.display = 'block';
+            // Add warning if needed
+            const warningBox = document.getElementById('warningBox');
+            if (setup.warning) {
+                warningBox.innerHTML = `<div class="warning">${setup.warning}</div>`;
+            } else {
+                warningBox.innerHTML = '';
+            }
+            
+            resultDiv.style.display = 'block';
         }
     </script>
 </body>
