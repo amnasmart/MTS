@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Binance Coin Analysis Tool</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        .container {
+            background-color: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+        }
+        .input-group {
+            margin-bottom: 20px;
+            display: flex;
+            gap: 10px;
+        }
+        input, select, button {
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+        }
+        input {
+            flex: 1;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        .chart-container {
+            position: relative;
+            height: 400px;
+            margin-bottom: 30px;
+        }
+        .trade-setup {
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 20px;
+        }
+        .setup-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        .detail-box {
+            background-color: white;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 0 5px rgba(0,0,0,0.05);
+        }
+        .bullish {
+            color: #27ae60;
+            font-weight: bold;
+        }
+        .bearish {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+        .neutral {
+            color: #f39c12;
+            font-weight: bold;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            display: none;
+        }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border-left-color: #09f;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .timeframe-buttons {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+        .timeframe-btn {
+            padding: 5px 10px;
+            background-color: #ecf0f1;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        .timeframe-btn.active {
+            background-color: #3498db;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Binance Coin Analysis Tool</h1>
+        
+        <div class="input-group">
+            <input type="text" id="coinInput" placeholder="Enter coin symbol (e.g. BTCUSDT, ETHUSDT)" value="BTCUSDT">
+            <button id="fetchData">Analyze Coin</button>
+        </div>
+        
+        <div class="timeframe-buttons">
+            <button class="timeframe-btn active" data-tf="1h">1H</button>
+            <button class="timeframe-btn" data-tf="4h">4H</button>
+            <button class="timeframe-btn" data-tf="1d">1D</button>
+            <button class="timeframe-btn" data-tf="1w">1W</button>
+        </div>
+        
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Analyzing coin data...</p>
+        </div>
+        
+        <div class="chart-container">
+            <canvas id="priceChart"></canvas>
+        </div>
+        
+        <div class="trade-setup" id="tradeSetup" style="display: none;">
+            <h2>Trade Setup Recommendation</h2>
+            <div id="setupSummary"></div>
+            <div class="setup-details">
+                <div class="detail-box">
+                    <h3>Entry Price</h3>
+                    <p id="entryPrice">-</p>
+                </div>
+                <div class="detail-box">
+                    <h3>Take Profit</h3>
+                    <p id="takeProfit">-</p>
+                </div>
+                <div class="detail-box">
+                    <h3>Stop Loss</h3>
+                    <p id="stopLoss">-</p>
+                </div>
+                <div class="detail-box">
+                    <h3>Risk/Reward</h3>
+                    <p id="riskReward">-</p>
+                </div>
+            </div>
+            <div class="detail-box" style="margin-top: 15px;">
+                <h3>Technical Analysis</h3>
+                <p id="technicalAnalysis">-</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let myChart = null;
+        let currentTimeframe = '1h';
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            // Set up timeframe buttons
+            document.querySelectorAll('.timeframe-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    document.querySelectorAll('.timeframe-btn').forEach(b => b.classList.remove('active'));
+                    this.classList.add('active');
+                    currentTimeframe = this.getAttribute('data-tf');
+                    if (document.getElementById('coinInput').value) {
+                        fetchData();
+                    }
+                });
+            });
+            
+            // Set up fetch data button
+            document.getElementById('fetchData').addEventListener('click', fetchData);
+            
+            // Load default data
+            fetchData();
+        });
+        
+        async function fetchData() {
+            const coin = document.getElementById('coinInput').value.trim().toUpperCase();
+            if (!coin) return;
+            
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('tradeSetup').style.display = 'none';
+            
+            try {
+                // Fetch candle data from Binance API
+                const response = await axios.get(`https://api.binance.com/api/v3/klines?symbol=${coin}&interval=${currentTimeframe}&limit=100`);
+                const candleData = response.data;
+                
+                // Process data for chart
+                const labels = candleData.map(item => new Date(item[0]).toLocaleDateString());
+                const prices = candleData.map(item => parseFloat(item[4])); // Closing prices
+                
+                // Create or update chart
+                renderChart(labels, prices, coin);
+                
+                // Analyze data and generate trade setup
+                const analysis = analyzeData(candleData, coin);
+                displayTradeSetup(analysis);
+                
+            } catch (error) {
+                console.error('Error fetching data:', error);
+                alert('Error fetching data. Please check the coin symbol and try again.');
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+        
+        function renderChart(labels, prices, coin) {
+            const ctx = document.getElementById('priceChart').getContext('2d');
+            
+            if (myChart) {
+                myChart.destroy();
+            }
+            
+            myChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: `${coin} Price`,
+                        data: prices,
+                        borderColor: 'rgb(75, 192, 192)',
+                        tension: 0.1,
+                        fill: false
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            grid: {
+                                display: false
+                            }
+                        },
+                        y: {
+                            beginAtZero: false
+                        }
+                    },
+                    plugins: {
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false
+                        }
+                    }
+                }
+            });
+        }
+        
+        function analyzeData(candleData, coin) {
+            const prices = candleData.map(item => parseFloat(item[4])); // Closing prices
+            const highs = candleData.map(item => parseFloat(item[2])); // High prices
+            const lows = candleData.map(item => parseFloat(item[3])); // Low prices
+            
+            // Calculate moving averages
+            const sma20 = calculateSMA(prices, 20);
+            const sma50 = calculateSMA(prices, 50);
+            
+            // Calculate RSI
+            const rsi = calculateRSI(prices, 14);
+            
+            // Calculate support and resistance
+            const support = Math.min(...lows.slice(-20));
+            const resistance = Math.max(...highs.slice(-20));
+            
+            // Determine trend
+            const lastPrice = prices[prices.length - 1];
+            const trend = determineTrend(prices, sma20, sma50, rsi);
+            
+            // Generate trade setup based on analysis
+            return generateTradeSetup(trend, lastPrice, support, resistance, rsi[rsi.length - 1], coin);
+        }
+        
+        function calculateSMA(data, period) {
+            const sma = [];
+            for (let i = period - 1; i < data.length; i++) {
+                const sum = data.slice(i - period + 1, i + 1).reduce((a, b) => a + b, 0);
+                sma.push(sum / period);
+            }
+            return sma;
+        }
+        
+        function calculateRSI(prices, period) {
+            const rsi = [];
+            let gains = 0;
+            let losses = 0;
+            
+            // Calculate initial average gains and losses
+            for (let i = 1; i <= period; i++) {
+                const change = prices[i] - prices[i - 1];
+                if (change >= 0) {
+                    gains += change;
+                } else {
+                    losses += Math.abs(change);
+                }
+            }
+            
+            let avgGain = gains / period;
+            let avgLoss = losses / period;
+            
+            // First RSI value
+            const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+            rsi.push(100 - (100 / (1 + rs)));
+            
+            // Subsequent RSI values
+            for (let i = period + 1; i < prices.length; i++) {
+                const change = prices[i] - prices[i - 1];
+                let currentGain = 0;
+                let currentLoss = 0;
+                
+                if (change >= 0) {
+                    currentGain = change;
+                } else {
+                    currentLoss = Math.abs(change);
+                }
+                
+                // Smooth the averages
+                avgGain = (avgGain * (period - 1) + currentGain) / period;
+                avgLoss = (avgLoss * (period - 1) + currentLoss) / period;
+                
+                const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+                rsi.push(100 - (100 / (1 + rs)));
+            }
+            
+            return rsi;
+        }
+        
+        function determineTrend(prices, sma20, sma50, rsi) {
+            const lastPrice = prices[prices.length - 1];
+            const lastSma20 = sma20[sma20.length - 1];
+            const lastSma50 = sma50[sma50.length - 1];
+            const lastRsi = rsi[rsi.length - 1];
+            
+            // Basic trend determination
+            if (lastPrice > lastSma20 && lastSma20 > lastSma50) {
+                if (lastRsi < 70) return 'bullish';
+                return 'overbought';
+            } else if (lastPrice < lastSma20 && lastSma20 < lastSma50) {
+                if (lastRsi > 30) return 'bearish';
+                return 'oversold';
+            } else {
+                return 'neutral';
+            }
+        }
+        
+        function generateTradeSetup(trend, lastPrice, support, resistance, rsi, coin) {
+            const setup = {
+                trend: trend,
+                coin: coin,
+                timeframe: currentTimeframe,
+                rsi: rsi.toFixed(2),
+                analysis: ''
+            };
+            
+            // Generate setup based on trend
+            switch(trend) {
+                case 'bullish':
+                    setup.entry = (lastPrice * 0.998).toFixed(4); // Slightly below current price
+                    setup.takeProfit = [
+                        (lastPrice * 1.02).toFixed(4), // 2% target
+                        (resistance * 0.98).toFixed(4) // Near resistance
+                    ];
+                    setup.stopLoss = (support * 1.01).toFixed(4); // Just below support
+                    setup.riskReward = '1:2';
+                    setup.analysis = `Strong bullish trend. Price above both SMAs (20 & 50). RSI at ${setup.rsi} (not overbought). Look for long opportunities with tight stop below support.`;
+                    break;
+                    
+                case 'bearish':
+                    setup.entry = (lastPrice * 1.002).toFixed(4); // Slightly above current price
+                    setup.takeProfit = [
+                        (lastPrice * 0.98).toFixed(4), // 2% target
+                        (support * 1.02).toFixed(4) // Near support
+                    ];
+                    setup.stopLoss = (resistance * 0.99).toFixed(4); // Just above resistance
+                    setup.riskReward = '1:2';
+                    setup.analysis = `Bearish trend. Price below both SMAs (20 & 50). RSI at ${setup.rsi} (not oversold). Consider short positions with stop above resistance.`;
+                    break;
+                    
+                case 'overbought':
+                    setup.entry = (lastPrice * 0.995).toFixed(4);
+                    setup.takeProfit = [
+                        (lastPrice * 1.01).toFixed(4), // Conservative target
+                        (resistance * 0.99).toFixed(4)
+                    ];
+                    setup.stopLoss = (lastPrice * 0.98).toFixed(4);
+                    setup.riskReward = '1:1.5';
+                    setup.analysis = `Caution: Overbought conditions (RSI ${setup.rsi}). Potential for pullback. Only consider short-term longs with tight stops or wait for better entry.`;
+                    break;
+                    
+                case 'oversold':
+                    setup.entry = (lastPrice * 1.005).toFixed(4);
+                    setup.takeProfit = [
+                        (lastPrice * 0.99).toFixed(4), // Conservative target
+                        (support * 1.01).toFixed(4)
+                    ];
+                    setup.stopLoss = (lastPrice * 1.02).toFixed(4);
+                    setup.riskReward = '1:1.5';
+                    setup.analysis = `Oversold conditions (RSI ${setup.rsi}). Potential bounce. Consider short-term shorts with tight stops or wait for reversal confirmation.`;
+                    break;
+                    
+                default: // neutral
+                    setup.entry = lastPrice.toFixed(4);
+                    setup.takeProfit = [
+                        (resistance * 0.99).toFixed(4),
+                        (support * 1.01).toFixed(4)
+                    ];
+                    setup.stopLoss = (lastPrice * (lastPrice > (support + resistance)/2 ? 0.99 : 1.01)).toFixed(4);
+                    setup.riskReward = '1:1';
+                    setup.analysis = `Neutral market. Price between SMAs (20 & 50). RSI at ${setup.rsi}. Wait for breakout above resistance or below support with volume confirmation.`;
+            }
+            
+            return setup;
+        }
+        
+        function displayTradeSetup(setup) {
+            document.getElementById('tradeSetup').style.display = 'block';
+            
+            // Set trend class
+            const summary = document.getElementById('setupSummary');
+            summary.className = setup.trend;
+            summary.innerHTML = `
+                <h3 class="${setup.trend}">${setup.coin} - ${setup.timeframe.toUpperCase()} Timeframe: ${setup.trend.toUpperCase()} Market</h3>
+                <p>Current RSI: ${setup.rsi}</p>
+            `;
+            
+            // Set trade details
+            document.getElementById('entryPrice').textContent = setup.entry;
+            document.getElementById('takeProfit').textContent = Array.isArray(setup.takeProfit) ? 
+                setup.takeProfit.join(' / ') : setup.takeProfit;
+            document.getElementById('stopLoss').textContent = setup.stopLoss;
+            document.getElementById('riskReward').textContent = setup.riskReward;
+            document.getElementById('technicalAnalysis').textContent = setup.analysis;
+        }
+    </script>
+</body>
+</html>
